@@ -1,15 +1,19 @@
 {
-    "img_path": "/path/to/mosaic_image",
-    "catalog_path": "/path/to/catalog",
-    "json_path": "/path/to/association.json",
-    "csv_path": "/path/to/wcs_file.csv",
-    "x_col": "xwin",
-    "y_col": "ywin",
-    "psf_array_filename": "./WebbPSF_model.fits",
+    "img_path": "/Volumes/YOUNG6/XLSSC_webbpsf_test/XLSSC112_nircam_clear-F200W_i2d.fits",
+    "catalog_path": "/Volumes/YOUNG6/XLSSC_webbpsf_test/stars_final.cat",
+    "association_path": "/Volumes/YOUNG6/XLSSC_webbpsf_test/association.json",
+    "csv_path": "/Volumes/YOUNG6/XLSSC_webbpsf_test/exposure_wcs_info.csv",
+    "catalog_format": "fits", 
+    "catalog_hdu": 1,
+    "x_col": "XWIN_IMAGE",
+    "y_col": "YWIN_IMAGE",
+    "1-indexed": true,
+    "psf_array_filename": "./STPSF_model.fits",
     "sigma": 0.79,
     "pixel_scale": 0.02,
     "dimension": 31,
-    "crds_path": "/path/to/crds_cache",
+    "crds_path": "/home/zpscofield/crds_cache",
     "crds_server_url": "https://jwst-crds.stsci.edu",
-    "webbpsf_path": "/path/to/webbpsf-data"
+    "stpsf_path": "/home/zpscofield/data/stpsf-data",
+    "_comment": "Note: catalog_format can be 'fits', 'ascii', or 'csv'. If fits, specify extension. Currently, it is assumed that the mosaic img is a full JWST i2d.fits file."
 }

@@ -13,7 +13,7 @@ import json
 from mpi4py import MPI
 import numpy as np
 from astropy.io import fits
-from webbpsf_fns import print_title, load_wcs_metadata, process_image_and_assign_coordinates, preload_opd_maps, current_time_string, simulate_psf
+from mstpsf_fns import print_title, load_wcs_metadata, process_image_and_assign_coordinates, preload_opd_maps, current_time_string, simulate_psf
 
 # Initialize MPI
 comm = MPI.COMM_WORLD
@@ -30,7 +30,7 @@ def main():
     # Relevant paths
     img_path = config['img_path'] # Mosaic image
     catalog_path = config['catalog_path'] # Catalog
-    json_path = config['json_path'] # JSON association file
+    association_path = config['association_path'] # JSON association file
     csv_path = config['csv_path'] # Path to the CSV file with WCS and metadata
     x_col = config['x_col'] # Column name for x coordinates in the catalog file.
     y_col = config['y_col'] # Column name for y coordinates in the catalog file.
@@ -47,7 +47,7 @@ def main():
     if rank == 0:
         print_title()
         wcs_metadata = load_wcs_metadata(csv_path)
-        mosaic_gal_coord, exp_cal_coords_dict = process_image_and_assign_coordinates(img_path, catalog_path, x_col, y_col, json_path, wcs_metadata)
+        mosaic_gal_coord, exp_cal_coords_dict = process_image_and_assign_coordinates(img_path, catalog_path, x_col, y_col, association_path, wcs_metadata)
     else:
         mosaic_gal_coord = None
         exp_cal_coords_dict = None
@@ -59,6 +59,8 @@ def main():
     wcs_metadata = comm.bcast(wcs_metadata, root=0)
     if rank == 0:
         filename_cache = preload_opd_maps(wcs_metadata, rank)
+    else:
+        filename_cache = None
     filename_cache = comm.bcast(filename_cache, root=0)
     comm.Barrier()  # Ensure all ranks wait until OPD maps are preloaded
     opd_map_cache = {}

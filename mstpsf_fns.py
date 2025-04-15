@@ -11,7 +11,7 @@ from astropy.io import fits, ascii
 from astropy.wcs import WCS, Sip
 from jwst.resample.resample_utils import decode_context
 from mpi4py import MPI
-import webbpsf
+import stpsf
 
 # Load configuration from JSON file
 with open('config.json', 'r') as config_file:
@@ -20,7 +20,7 @@ with open('config.json', 'r') as config_file:
 # Set environment variables from config
 os.environ['CRDS_PATH'] = config['crds_path']
 os.environ['CRDS_SERVER_URL'] = config['crds_server_url']
-os.environ['WEBBPSF_PATH'] = config['webbpsf_path']
+os.environ['STPSF_PATH'] = config['stpsf_path']
 
 def current_time_string():
     """
@@ -32,18 +32,20 @@ def current_time_string():
     now = datetime.datetime.now()
     return now.strftime("%H:%M:%S")
 
-# List to denote which columns correspond to a string value rather than a float value. 
+# Define columns that should be interpreted as strings
 string_columns = [
-    'Filename', 'XTENSION', 'EXTNAME', 'REFFRAME', 'EPH_TYPE', 'RADESYS', 'BUNIT', 'FILTER', 'DATE-OBS', 'DETECTOR', 'S_REGION', 'CTYPE1', 'CTYPE2', 'CUNIT1', 'CUNIT2'
+    'FILENAME', 'XTENSION', 'EXTNAME', 'REFFRAME', 'EPH_TYPE', 'RADESYS',
+    'BUNIT', 'FILTER', 'DATE-OBS', 'DETECTOR', 'S_REGION',
+    'CTYPE1', 'CTYPE2', 'CUNIT1', 'CUNIT2'
 ]
 
 def load_wcs_metadata(csv_path):
     """
-    Loads WCS metadata from a CSV file.
-    
+    Loads WCS metadata from a CSV file created from HDRTAB.
+
     Parameters:
         csv_path (str): Path to the CSV file containing WCS metadata for each exposure.
-    
+
     Returns:
         dict: A dictionary where each key is a filename and each value is a dictionary of WCS metadata.
     """
@@ -51,75 +53,72 @@ def load_wcs_metadata(csv_path):
     with open(csv_path, newline='') as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
-            exposure_name = row['Filename']
+            exposure_name = row['FILENAME']
             wcs_info = {}
             for key, value in row.items():
-                # This section initializes values as either float values or string values. 
-                if key in string_columns:
+                if key in string_columns or value in ['N/A', '']:
                     wcs_info[key] = value
                 else:
                     try:
                         wcs_info[key] = float(value)
                     except ValueError:
-                        wcs_info[key] = value
-            wcs_metadata[exposure_name] = wcs_info # The final dictionary wcs_metadata includes all information from the image header as well as necessary
-                                                   # information from the primary header (detector, filter, observation date). It is organized with each
-                                                   # filename being a key.  
-                                                   
+                        wcs_info[key] = value  # fallback to string
+            wcs_metadata[exposure_name] = wcs_info
     return wcs_metadata
 
-# Create WCS object from CSV metadata
 def create_wcs_from_csv(wcs_info):
     """
-    Creates a WCS object from WCS metadata.
-    
+    Creates a WCS object from WCS metadata dictionary.
+
     Parameters:
         wcs_info (dict): Dictionary containing WCS metadata.
-    
+
     Returns:
         WCS: An astropy WCS object created from the metadata.
     """
-    header = fits.Header() # Initialize an empty header
+    header = fits.Header()
     
-    wcs_keys = ['CRVAL1', 'CRVAL2', 'CRPIX1', 'CRPIX2', 'CD1_1', 'CD1_2', 'CD2_1', 'CD2_2',
-                'CTYPE1', 'CTYPE2', 'CUNIT1', 'CUNIT2', 'WCSAXES', 'RADECSYS', 'RA_V1', 
-                'DEC_V1', 'PA_V3', 'S_REGION', 'V2_REF', 'V3_REF', 'VPARITY', 'V3I_YANG', 
-                'RA_REF', 'DEC_REF', 'ROLL_REF', 'VELOSYS'] # Set of keys that are relevant for creating a WCS object
-    
+    # Core WCS keywords
+    wcs_keys = [
+        'CRVAL1', 'CRVAL2', 'CRPIX1', 'CRPIX2',
+        'CD1_1', 'CD1_2', 'CD2_1', 'CD2_2',
+        'CTYPE1', 'CTYPE2', 'CUNIT1', 'CUNIT2',
+        'WCSAXES', 'RADESYS', 'RA_V1', 'DEC_V1', 'PA_V3',
+        'S_REGION', 'V2_REF', 'V3_REF', 'VPARITY', 'V3I_YANG',
+        'RA_REF', 'DEC_REF', 'ROLL_REF', 'VELOSYS'
+    ]
+
     for key in wcs_keys:
-        if key in wcs_info:
-            if key == 'WCSAXES':
-                header[key] = int(wcs_info[key]) 
-            else:
-                header[key] = wcs_info[key]
-    
-    # Handle SIP coefficients
-    if 'A_ORDER' in wcs_info and wcs_info['A_ORDER'] != 'N/A':
-        header['A_ORDER'] = int(wcs_info['A_ORDER'])
-        header['B_ORDER'] = int(wcs_info['B_ORDER'])
-        header['AP_ORDER'] = int(wcs_info['AP_ORDER'])
-        header['BP_ORDER'] = int(wcs_info['BP_ORDER'])
-        
-        for key in wcs_info:
-            if key.startswith('A_') and wcs_info[key] != 'N/A':
-                header[key] = wcs_info[key]
-            elif key.startswith('B_') and wcs_info[key] != 'N/A':
-                header[key] = wcs_info[key]
-            elif key.startswith('AP_') and wcs_info[key] != 'N/A':
-                header[key] = wcs_info[key]
-            elif key.startswith('BP_') and wcs_info[key] != 'N/A':
-                header[key] = wcs_info[key]
-    
-    # Create WCS object from the header
-    wcs = WCS(header)
-    return wcs
+        if key in wcs_info and wcs_info[key] != 'N/A':
+            value = wcs_info[key]
+            if key == 'WCSAXES' or key in ['VPARITY']:
+                try:
+                    value = int(value)
+                except ValueError:
+                    pass
+            header[key] = value
+
+    # Handle optional SIP coefficients
+    for prefix in ['A_', 'B_', 'AP_', 'BP_']:
+        for i in range(10):  # up to 10th order - can be changed.
+            for j in range(10):
+                key = f"{prefix}{i}_{j}"
+                if key in wcs_info and wcs_info[key] != 'N/A':
+                    header[key] = float(wcs_info[key])
+
+    # SIP order terms if present
+    for order_key in ['A_ORDER', 'B_ORDER', 'AP_ORDER', 'BP_ORDER']:
+        if order_key in wcs_info and wcs_info[order_key] != 'N/A':
+            header[order_key] = int(wcs_info[order_key])
+
+    return WCS(header)
 
 def load_opd_map(nrc, date, opd_map_cache, filename_cache):
     """
     Loads the OPD map for a given date and caches it.
     
     Parameters:
-        nrc (webbpsf.NIRCam): NIRCam object from WebbPSF.
+        nrc (stpsf.NIRCam): NIRCam object from WebbPSF.
         date (str): Observation date.
         opd_map_cache (dict): Cache of loaded OPD maps.
         filename_cache (dict): Cache of OPD map filenames.
@@ -150,7 +149,7 @@ def preload_opd_maps(wcs_metadata, rank):
             dates.add(metadata['DATE-OBS'])
         for date in dates:
             print(f'[{current_time_string()}] Caching OPD map: {date}')
-            nrc = webbpsf.NIRCam()
+            nrc = stpsf.NIRCam()
             nrc.load_wss_opd_by_date(date, plot=False, verbose=False, choice='closest') # Load the OPD map based on the date
 
             # Open the OPD based on whether it is an HDU list or a path to an OPD map.
@@ -165,11 +164,10 @@ def preload_opd_maps(wcs_metadata, rank):
             header = hdu_list[0].header
             corr_id = header['corr_id']
             apername = header['apername']
-            home_dir = os.getenv('HOME')
-            opd_map_dir = 'webbpsf-data/MAST_JWST_WSS_OPDs'
+            opd_map_dir = f'{config['stpsf_path']}/MAST_JWST_WSS_OPDs'
 
             # Cache OPD maps based on the header information, given that this header information is included in the filename.
-            pattern = f'{home_dir}/{opd_map_dir}/{corr_id}-{apername}*.fits'
+            pattern = f'{opd_map_dir}/{corr_id}-{apername}*.fits'
             matching_files = glob.glob(pattern)
             if matching_files:
                 full_file_path = matching_files[0]
@@ -200,7 +198,7 @@ def simulate_psf(mosaic_coord, exp_cal_coords_dict, fov, opd_map_cache, filename
     Returns:
         np.ndarray: The simulated PSF as a 2D numpy array.
     """
-    nrc = webbpsf.NIRCam() # Initialize NIRCam object from WebbPSF
+    nrc = stpsf.NIRCam() # Initialize NIRCam object from WebbPSF
     mosaic_coord_tuple = tuple(mosaic_coord)
 
     contributing_exposures = [] # Empty list to be filled with contributing exposures.
@@ -232,7 +230,7 @@ def simulate_psf(mosaic_coord, exp_cal_coords_dict, fov, opd_map_cache, filename
             print(f"Error message: {e}")
             continue
 
-        exposure_time = wcs_data['XPOSURE'] # Exposure time
+        exposure_time = wcs_data['EFFEXPTM'] # Exposure time
         roll_ref = wcs_data['ROLL_REF'] # Roll angle of the detector
         obs_filter = wcs_data['FILTER'] # Filter
         obs_date = wcs_data['DATE-OBS'] # Observation date
@@ -279,7 +277,7 @@ def print_title():
     print('----------------------------------------------------')
     print(f'\n[{current_time_string()}] Organizing exposures and transforming coordinates...\n')
 
-def process_image_and_assign_coordinates(mosaic_img_path, catalog_path, x_col, y_col, json_path, wcs_metadata):
+def process_image_and_assign_coordinates(mosaic_img_path, catalog_path, x_col, y_col, association_path, wcs_metadata):
     """
     Processes the mosaic image and assigns coordinates to exposures.
     
@@ -288,7 +286,7 @@ def process_image_and_assign_coordinates(mosaic_img_path, catalog_path, x_col, y
         catalog_path (str): Path to the catalog file.
         x_col (str): Column name for x coordinates in the catalog file.
         y_col (str): Column name for y coordinates in the catalog file.
-        json_path (str): Path to the JSON file containing association data.
+        association_path (str): Path to the JSON file containing association data.
         wcs_metadata (dict): Dictionary containing WCS metadata for each exposure.
     
     Returns:
@@ -302,10 +300,19 @@ def process_image_and_assign_coordinates(mosaic_img_path, catalog_path, x_col, y
         mosaic_wcs = WCS(mosaic_img[1].header)
 
     # Loading coordinates from a catalog file
-    cat = ascii.read(catalog_path)
+    catalog_format = config['catalog_format']
+    if catalog_format == 'csv' or catalog_format == 'ascii':
+        cat = ascii.read(catalog_path)
+    elif catalog_format == 'fits':
+        cat = fits.open(catalog_path)[config['catalog_hdu']].data
+
     print(f'Number of coordinates to process: {len(cat)}\n')
-    x_coords = cat[x_col]
-    y_coords = cat[y_col]
+    if config["1-indexed"] == True:
+        x_coords = cat[x_col]-1 # For 1-indexed Source_extractor coordinates. 
+        y_coords = cat[y_col]-1
+    else:
+        x_coords = cat[x_col]
+        y_coords = cat[y_col]
 
     # Compute RA and DEC for all coordinates
     ra_list = []
@@ -318,7 +325,7 @@ def process_image_and_assign_coordinates(mosaic_img_path, catalog_path, x_col, y
     mosaic_gal_coord = np.vstack((x_coords, y_coords)).T
     ra_dec_coords = np.vstack((ra_list, dec_list)).T
 
-    with open(json_path, 'r') as file:
+    with open(association_path, 'r') as file:
         asn_data = json.load(file)
 
     # Get an ordered list of the exposures which contribute to the mosaic.
@@ -356,7 +363,7 @@ def process_image_and_assign_coordinates(mosaic_img_path, catalog_path, x_col, y
             # Convert sky coordinates (RA, Dec) to cal.fits pixel coordinates
             x_cal, y_cal = cal_wcs.world_to_pixel_values(ra, dec)
 
-            # Round to nearest pixel for use with webbpsf
+            # Round to nearest pixel for use with stpsf
             x_cal_int, y_cal_int = int(np.round(x_cal)), int(np.round(y_cal))
             ra_int, dec_int = cal_wcs.pixel_to_world_values(x_cal_int, y_cal_int)
 
