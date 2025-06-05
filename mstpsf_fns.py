@@ -164,7 +164,7 @@ def preload_opd_maps(wcs_metadata, rank):
             header = hdu_list[0].header
             corr_id = header['corr_id']
             apername = header['apername']
-            opd_map_dir = f'{config['stpsf_path']}/MAST_JWST_WSS_OPDs'
+            opd_map_dir = f"{config['stpsf_path']}/MAST_JWST_WSS_OPDs"
 
             # Cache OPD maps based on the header information, given that this header information is included in the filename.
             pattern = f'{opd_map_dir}/{corr_id}-{apername}*.fits'
